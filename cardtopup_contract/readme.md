@@ -81,8 +81,10 @@ Contracts provided here are aimed to be deployed on L2 networks, provided versio
 is aimed and was tested in Polygon (chainID 137).
 
 The expected code changes between L2 networks are as following:
-HardenedTopupProxy.sol line 531: put appropriate RLP-encoded chainID value in assignment;
-HardenedTopupProxy.sol line 939: put appropriate chainID value in require check;
+
+    HardenedTopupProxy.sol line 531: put appropriate RLP-encoded chainID value in assignment;
+
+    HardenedTopupProxy.sol line 939: put appropriate chainID value in require check;
 
 L1 contract version would not have any bridging function called, on line 326
 
@@ -92,7 +94,7 @@ is changed to
 
     IERC20Upgradeable(cardTopupToken).safeTransfer(cardPartnerAddress, _amount);
 
-bridgeAssetDirect() function could be removed from L1 contract altogeher.
+bridgeAssetDirect() function could be removed from L1 contract altogether.
 
 
 ### Overall topup flow (for reference)
