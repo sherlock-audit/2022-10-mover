@@ -1,0 +1,13 @@
+{
+  "name": "MoverTopupContracts",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.7.3",
+    "@openzeppelin/contracts-upgradeable": "^4.7.3",
+    "@openzeppelin/truffle-upgrades": "^1.16.0",
+    "@truffle/hdwallet-provider": "^2.0.14",
+    "truffle-flattener": "^1.6.0"
+  }
+}
