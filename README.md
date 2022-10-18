@@ -25,4 +25,8 @@ TBD
 
 # About Mover
 
-TBD
+Mover is building the web3 payment card primitives platform. We aim to help projects 
+build on top/with us to bring their use cases to real world. One card for all crypto 
+natives: those who contribute to a DAO, those who trade on DEXs, those who trade 
+decentralised options, those who collect NFTs, those who mint NFTs, those who create 
+NFTs, and many more. We are here to create THE web3 card.

@@ -57,8 +57,8 @@ contract ExchangeProxy is AccessControl, IExchangeProxy, SafeAllowanceReset
     event EmergencyTransfer(address indexed token, address indexed destination, uint256 amount);
 
     // token address for non-wrapped eth
-    address private constant ETH_TOKEN_ADDRESS =
-        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    // (this matches how 0x and 1inch encode native token)
+    address private constant ETH_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     // yield distributor
     // NOTE: to keep overhead for users minimal, fees are not transferred

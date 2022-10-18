@@ -102,3 +102,14 @@ bridgeAssetDirect() function could be removed from L1 contract altogether.
 Draft schema could be found in /doc directory.
 
 TopupFlowPt1.pdf contains interaction between app and reviewed contracts;
+
+
+### Tests
+
+Tests are provided to cover the main 3 flows, please ensure that a truffle
+seed phrase is provided in the TopupProxyPermitFlow.test.js on line 22
+(to allow permit signing).
+
+Truffle version should for now be 5.4.29 or lower, otherwise block header
+contains baseFeePerGas while its hash is being calculated using legacy
+structure (probably a bug).

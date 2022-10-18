@@ -73,6 +73,10 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
     using RLPReader for bytes;
     using ByteUtil for bytes;
 
+    // could be hardcoded per chain, but are kept as variables for test convenience
+    uint private CHAIN_ID;      // e.g. 137 for Polygon
+    bytes private CHAIN_ID_RLP; // e.g. '\x81\x89' for Polygon
+
     // provided by this contract to bridges/swaps contracts
     uint256 private constant ALLOWANCE_SIZE = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
     // token address for non-wrapped eth
@@ -122,8 +126,11 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
 
     event EmergencyTransfer(address indexed token, address indexed destination, uint256 amount);
 
-    function initialize() public initializer {
+    function initialize(uint _chainId, bytes memory _chainIdRLP) public initializer {
         _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
+
+        CHAIN_ID = _chainId;
+        CHAIN_ID_RLP = _chainIdRLP;
 
         // no need to initialize zero and false values
         // paused = false;
@@ -514,7 +521,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
              signature values that would allow to recover sender (tx signer)
       * @notice In lists 0xc0 means empty list as additional condition
       */
-    function decodeSignedTx(bytes memory rlpSignedTx) internal pure returns (SignedTransaction memory t) {
+    function decodeSignedTx(bytes memory rlpSignedTx) internal view returns (SignedTransaction memory t) {
         // if has prefix 0x2 its tx from London hardfork (0x1 Berlin is rare and not supported)
         if (uint8(rlpSignedTx[0]) != 0x2) {
             // legacy tx
@@ -528,7 +535,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
             uint chainID = (fields[6].toUint() - 35) / 2; // EIP-155
 
             // 137 Polygon ChainID RLP-encoded, we would place appropriate Chain ID to check on every L2 contract instance
-            bytes memory polygonChainId = '\x81\x89';
+            bytes memory polygonChainId = CHAIN_ID_RLP;
             bytes memory zeroValue = '\x80';
             fields[6] = polygonChainId.toRlpItem(); //encodeUint(chainID).toRlpItem(); // (for unsigned legacy tx V equals ChainID)
             fields[7] = zeroValue.toRlpItem(); //encoded value of 0, encodeUint(0).toRlpItem();
@@ -649,7 +656,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
     function validateTxProof(
         bytes32 blockHash,
         bytes calldata proofBlob
-    ) public pure returns (uint8 result, SignedTransaction memory t) {
+    ) public view returns (uint8 result, SignedTransaction memory t) {
         result = 0;
         Proof memory proof = decodeProofBlob(proofBlob);
         if (proof.kind != 1) {
@@ -909,7 +916,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         bytes32 message = constructMsg(keccak256(abi.encodePacked(msg.sender)), _token, _amount, _timestamp);
         address signer = recoverSigner(message, _signature);
         require(hasRole(TRUSTED_EXETUTOR_ROLE, signer), "wrong signature");
-        require(block.timestamp - _timestamp < allowanceSignatureTimespan);
+        require(block.timestamp - _timestamp < allowanceSignatureTimespan, "old sig");
 
         checkAllowance(_token, _amount);
 
@@ -936,7 +943,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         require(t.to == _token, "token mismatch");
 
         // check that chainID is correct
-        require(t.chainID == 137, "chain id mismatch");
+        require(t.chainID == CHAIN_ID, "chain id mismatch");
         
         // we check 'current' allowance state (ignoring the value in the provided approve tx proof)
         //uint256 approveamount = toUint256(t.data, 36);
