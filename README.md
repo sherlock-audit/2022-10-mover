@@ -15,14 +15,24 @@
 
 # Audit scope
 
-> ~894 nSLOC
-
 The single goal of the contracts is to get user funds (native token or ERC-20 token),
 swap it to USDC (PoS USDC on Polygon) and bridge it to specified static address on L1 Eth,
 on which user debit card settlement would be initiated.
 
-TBD
+```
+ExchangeProxy.sol
+RLPReader.sol
+SafeAllowanceReset.sol
+ByteUtil.sol
+SafeAllowanceResetUpgradeable.sol
+HardenedTopupProxy.sol
+ContractWhitelist.sol
+```
 
 # About Mover
 
-TBD
+Mover is building the web3 payment card primitives platform. We aim to help projects
+build on top/with us to bring their use cases to real world. One card for all crypto
+natives: those who contribute to a DAO, those who trade on DEXs, those who trade
+decentralised options, those who collect NFTs, those who mint NFTs, those who create
+NFTs, and many more. We are here to create THE web3 card.
