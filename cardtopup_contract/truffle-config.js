@@ -41,6 +41,11 @@ module.exports = {
    */
 
   networks: {
+    develop: {
+      host: "127.0.0.1",
+      port: 9545,
+      network_id: "1337",
+    },
     ropsten: {
       provider: function() {
         return new HDWalletProvider(private_ropsten, "https://ropsten.infura.io/v3/apikey")

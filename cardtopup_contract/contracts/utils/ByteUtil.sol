@@ -2,6 +2,7 @@
 pragma solidity ^0.8.6;
 
 library ByteUtil {
+    // EVM memory word size
     uint8 constant WORD_SIZE = 32;
 
     /*
@@ -33,6 +34,9 @@ library ByteUtil {
         }
     }
 
+    /**
+        @dev function to create a byte subarray from source array, using assembly-optimized copying of memory
+     */
     function slice(
         bytes memory _bytes,
         uint256 _start,

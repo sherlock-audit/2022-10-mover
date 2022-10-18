@@ -103,6 +103,57 @@ contract('HardenedTopupProxy: Trusted signature flow', function (accounts) {
     expect((await this.mockusdc.balanceOf(this.bridgemock.address)).toString()).to.equal('5000');
   });
 
+  it('must not allow topup when contract operation is paused', async function() {
+    // 1. create EOA and provide role of 'trusted executor' to it
+    const seed = await bip39.mnemonicToSeed("trophy just rib bamboo skirt follow such margin agree fence peanut vague");
+    const hdk = hdkey.fromMasterSeed(seed);
+    const addr_node = hdk.derivePath("m/44'/60'/0'/0/1"); //m/44'/60'/0'/0/0 is derivation path for the first account. m/44'/60'/0'/0/1 is the derivation path for the second account and so on
+    const addr = addr_node.getWallet().getAddressString(); //check that this is the same with the address that ganache list for the first account to make sure the derivation is correct
+    const private_key = addr_node.getWallet().getPrivateKey();
+
+    await this.topupproxy.grantRole(web3.utils.sha3("TRUSTED_EXECUTION"), addr, { from: accounts[0] });
+    await this.topupproxy.setAllowanceSignatureTimespan(600, { from: accounts[0] });
+
+    // 2. accounts[2] is to make topup
+    await this.mockusdc.transfer(accounts[2], web3.utils.toBN('5000'), { from: accounts[0] });
+    this.approveTx = await this.mockusdc.approve(this.topupproxy.address, web3.utils.toBN('5000'), { from: accounts[2] });
+
+    // 3. sign the message by trusted executor (without prefix)
+    const timestampApprove = await time.latest();
+    const message = web3utils.encodePacked(
+      {value: 'MOVER TOPUP ', type: 'string'},
+      {value: web3.utils.keccak256(accounts[2]), type: 'bytes32'},
+      {value: ' TOKEN ', type: 'string'},
+      {value: this.mockusdc.address, type: 'address'},
+      {value: ' AMOUNT ', type: 'string'},
+      {value: web3.utils.toBN('5000'), type: 'uint256'},
+      {value: ' TS ', type: 'string'},
+      {value: timestampApprove, type: 'uint256'}
+    );
+
+    const msghash = Uint8Array.from(web3.utils.hexToBytes(web3.utils.keccak256(message)));
+    const sig = secp256k1.ecdsaSign(msghash, private_key);
+    const signature = [].concat(Array.from(sig.signature), (sig.recid + 27));
+
+    // pause contract operation
+    await this.topupproxy.setPaused(true, { from: accounts[0] });
+
+    // 4. call topup from accounts[2] providing signed recent approval verification
+    const bridgeData = [].concat(web3.utils.hexToBytes(this.bridgemock.address), 
+      web3.utils.hexToBytes('0x0000000000000000000000000000000000000000000000000000000000000000'));
+
+    await truffleAssert.reverts(this.topupproxy.CardTopupTrusted(this.mockusdc.address, 
+      web3.utils.toBN('5000'),
+      web3.utils.toBN(timestampApprove),
+      web3.utils.bytesToHex(signature),
+      web3.utils.toBN(0),
+      [],
+      web3.utils.toBN(1),
+      bridgeData, 
+      '0x0000000000000000000000000000000000000000000000000000000000000000', { from: accounts[2] }), 
+    "operations paused");
+  });
+
   it('must not allow topup when invalid signed approval verify message', async function() {
     // 1. create EOA and provide role of 'trusted executor' to it
     const seed = await bip39.mnemonicToSeed("trophy just rib bamboo skirt follow such margin agree fence peanut vague");

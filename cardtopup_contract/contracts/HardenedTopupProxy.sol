@@ -73,14 +73,18 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
     using RLPReader for bytes;
     using ByteUtil for bytes;
 
-    // could be hardcoded per chain, but are kept as variables for test convenience
-    uint private CHAIN_ID;      // e.g. 137 for Polygon
-    bytes private CHAIN_ID_RLP; // e.g. '\x81\x89' for Polygon
-
     // provided by this contract to bridges/swaps contracts
     uint256 private constant ALLOWANCE_SIZE = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
     // token address for non-wrapped eth
     address private constant ETH_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // VARIABLES
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // could be hardcoded per chain, but are kept as variables for test convenience
+    uint private CHAIN_ID;      // e.g. 137 for Polygon
+    bytes private CHAIN_ID_RLP; // e.g. '\x81\x89' for Polygon
 
     // if greater than zero, this is a fractional amount (1e18 = 1.0) fee applied to all topups (after exchange to USDC)
     uint256 public topupFee;
@@ -113,19 +117,32 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
     // no topups are allowed if paused
     bool public paused;
 
-    event CardTopup(address indexed account, address token, uint256 valueToken, uint256 valueUSDC, bytes32 _receiverHash);
-
-    event BridgeTx(address indexed account, address token, uint256 amount, address bridge, address destination);
-
     // L1 Eth address for card topup settlement
     address private cardPartnerAddress;
+
     // Token that could be bridged and used for card top-up
     address private cardTopupToken;
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // EVENTS
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // this is main event that is emitted after bridging to settlement chain is called
+    event CardTopup(address indexed account, address token, uint256 valueToken, uint256 valueUSDC, bytes32 _receiverHash);
+
+    // auxiliary event that can be used to track bridge addresses and match incoming target chain transactions
+    event BridgeTx(address indexed account, address token, uint256 amount, address bridge, address destination);
+
+    // event emitted when the topup or swap fee is changed
     event FeeChanged(string indexed name, uint256 value);
 
+    // event that is triggered if amdin retrieves funds from this contract using EmenergencyTransfer method
     event EmergencyTransfer(address indexed token, address indexed destination, uint256 amount);
 
+    /**
+        @dev chainId and chainIdRLP could be hardcoded, but are provided to constructor for flexibility
+          and testing convenience.
+     */
     function initialize(uint _chainId, bytes memory _chainIdRLP) public initializer {
         _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
 
@@ -143,6 +160,13 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         allowanceTreshold = 1_100_000_000_000_000_000;
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // ADMIN SETTERS
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    /**
+        @dev modifier to allow only DEFAULT_ADMIN_ROLE access to certain methods
+     */
     modifier onlyAdmin() {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "admin only");
         _;
@@ -156,10 +180,12 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         trustedRegistryContract = IContractWhitelist(_trustedRegistryContract);
     }
 
+    // allowance treshold can be modified by admin to relax/stricten approval amount matching
     function setAllowanceTreshold(uint256 _allowanceTreshold) public onlyAdmin {
         allowanceTreshold = _allowanceTreshold;
     }
 
+    // period of signature validity for approval can be modified by admin
     function setAllowanceSignatureTimespan(uint256 _allowanceSignatureTimespan) public onlyAdmin {
         allowanceSignatureTimespan = _allowanceSignatureTimespan;
     }
@@ -184,6 +210,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         cardPartnerAddress = _cardPartnerAddress;
     }
 
+    // card topup token is planned to be USDC (or chain equivalent), but can be changed by admin at any time
     function setCardTopupToken(address _topupToken) public onlyAdmin {
         cardTopupToken = _topupToken;
     }
@@ -196,21 +223,28 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         maxAmount = _maxAmount;
     }
 
+    // this method could also be used by admin to unpause operations
     function setPaused(bool _paused) public onlyAdmin {
         paused = _paused;
     }
 
-    function pauseOperation() public onlyAdmin {
+    /**
+        @dev pause could be triggered by a trusted pauser EOA that is linked to a security backend
+     */
+    function pauseOperation() public {
+        require(hasRole(TRUSTED_PAUSER_ROLE, msg.sender), "pauser only");
         paused = true;
     }
 
-    // this function is similar to emergencyTransfer, but relates to yield distribution
-    // fees are not transferred immediately to save gas costs for user operations
-    // so they accumulate on this contract address and can be claimed by yield distributor
-    // when appropriate. Anyway, no user funds should appear on this contract, it
-    // only performs transfers, so such function has great power, but should be safe
-    // It does not require approval, so may be used by yield distributor to get fees from swaps
-    // in different small token amounts
+    /**
+        @dev this function is similar to emergencyTransfer, but relates to yield distribution
+          fees are not transferred immediately to save gas costs for user operations
+          so they accumulate on this contract address and can be claimed by yield distributor
+          when appropriate. Anyway, no user funds should appear on this contract, it
+          only performs transfers, so such function has great power, but should be safe
+          It does not require approval, so may be used by yield distributor to get fees from swaps
+          in different small token amounts
+    */
     function claimFees(address _token, uint256 _amount) public {
         require(msg.sender == yieldDistributorAddress, "yield distributor only");
         if (_token != ETH_TOKEN_ADDRESS) {
@@ -220,9 +254,11 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         }
     }
 
-    // all Mover contracts that do not hold funds have this emergency function if someone occasionally
-    // transfers ERC20 tokens directly to this contract
-    // callable only by admin
+    /**
+        @dev all Mover contracts that do not hold funds have this emergency function if someone occasionally
+          transfers ERC20 tokens directly to this contract
+          this metod is callable only by admin, no timelock etc., because this contract is not aimed to hold user funds
+    */
     function emergencyTransfer(
         address _token,
         address _destination,
@@ -238,8 +274,15 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // CROSS-CHAIN TOPUP MAIN INTERNAL FUNCTIONS
+    //   the normal call chain is as following:
+    //   public Top-up method -> _processTopup() -> execute swap (optional) -> bridgeAssetDirect()
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////    
 
+    /**
+        @dev check that current (for state of this block/tx) approval of token and amount is at least the
+          planned topup value, but not larger than some treshold (10% by default) to enforce allowance for
+          single (current) operation, not leaving standing significant token allowance for this contract in the future
+     */
     function checkAllowance(address _token, uint256 _amount) view internal {
         require(IERC20Upgradeable(_token).allowance(msg.sender, address(this)) >= _amount, "insufficient allowance");
         require(IERC20Upgradeable(_token).allowance(msg.sender, address(this)) < _amount.mul(allowanceTreshold).div(1e18), "excessive allowance");
@@ -267,6 +310,8 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         // 4. check allowance to the bridge contract
         // 5. check the bridge address is in the whitelist and perform a call to bridge
 
+        // if the token to be provided matches the defined cardTopupToken, do not perform any
+        // swap, just deduct topup fee (if fee > 0) and proceed to bridging for settlement
         if (_token == cardTopupToken) {
             // beneficiary is msg.sender (perform static check)
             IERC20Upgradeable(_token).safeTransferFrom(_beneficiary, address(this), _amount);
@@ -274,7 +319,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
             uint256 feeAmount = _amount.mul(topupFee).div(1e18);
 
             // bridge from _beneficiary to card L1 relay
-            bridgeAssetDirect(_amount.sub(feeAmount), _bridgeType, _bridgeTxData);
+            _bridgeAssetDirect(_amount.sub(feeAmount), _bridgeType, _bridgeTxData);
 
             emit CardTopup(_beneficiary, _token, _amount, _amount.sub(feeAmount), _receiverHash);
             return;
@@ -282,10 +327,11 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
 
         // conversion is required, perform swap through exchangeProxy
         if (_token != ETH_TOKEN_ADDRESS) {
+            // transfer tokens on the exchange proxy balance before performing swap call
             IERC20Upgradeable(_token).safeTransferFrom(_beneficiary, address(exchangeProxyContract), _amount);
         }
 
-        // exchange proxy is trusted and would check swap provider on its own
+        // exchange proxy is trusted and would check swap provider on its own in trusted registry contract
         uint256 amountReceived =
             IExchangeProxy(address(exchangeProxyContract)).executeSwapDirect{value: msg.value}(
                 address(this),
@@ -299,6 +345,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         // this is sanity check from the client if the swap misbehaves
         require(amountReceived >= _expectedMinimumReceived, "minimum swap amount not met");
 
+        // fee is deducted in receiving token (USDC)
         if (topupFee != 0) {
             uint256 feeAmount = amountReceived.mul(topupFee).div(1e18);
             amountReceived = amountReceived.sub(feeAmount);
@@ -330,15 +377,27 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         }
 
         // bridge from _beneficiary to card L1 relay
-        bridgeAssetDirect(amountReceived, _bridgeType, _bridgeTxData);
+        _bridgeAssetDirect(amountReceived, _bridgeType, _bridgeTxData);
 
+        // this event is important for the backend to track topup activity, esp. store receiverHash
+        // that could provide ability to topup topup tag associated with arbitrary card/address
         emit CardTopup(_beneficiary, _token, _amount, amountReceived, _receiverHash);
     }
 
-    function bridgeAssetDirect(uint256 _amount, uint256 _bridgeType, bytes memory _bridgeTxData) internal {
+    /**
+        @dev bridgeAssetDirect is checking amount conditions, extracts bridge address from bridgeTxData
+          bytes, verifies that it is trusted, and executes bridge call that can vary depending on the bridge
+          type. Currently Synapse (bridgeType == 0) and Across (bridgeType ==1) are supported.
+          We are assuming that bridge address os stored in trusted contract registry, and thus, even provided
+          by capability to pass arbitrary bytes in the call data for the e.g. Synapse bridge, this should
+          not provide ability to access or manipulate other users funds in any way.
+     */
+    function _bridgeAssetDirect(uint256 _amount, uint256 _bridgeType, bytes memory _bridgeTxData) internal {
         require(_amount >= minAmount, "minimum amount not met");
         require(_amount < maxAmount, "maximum amount exceeded");
 
+        // first 20 bytes (data is tightly packed, not in 32 byte words) are the address
+        // of the bridge contract to be called for bridging
         address targetAddress;
         assembly {
             targetAddress := mload(add(_bridgeTxData, 0x14))
@@ -348,17 +407,26 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         // so we protect ourserves by allowing only the addresses we add to allowlist
         require(trustedRegistryContract.isWhitelisted(targetAddress), "call to non-trusted");
 
+        // allowance of max uint256 is provided (if current allowance < bridging amount)
+        // for the topup token to be used bridge contract from this contract
+        // this topup proxy contract does not hold user funds/tokens, balance should only
+        // consist of collected fees (which are harvested periodically)
         resetAllowanceIfNeeded(IERC20Upgradeable(cardTopupToken), targetAddress, _amount);
 
         if (_bridgeType == 0)
         {
+            // Synapse bridge call data is retrieved by performing a call by the application
+            // to bridge SDK and is not transformed by this contract
             bytes memory callData = _bridgeTxData.slice(20, _bridgeTxData.length - 20);
             (bool success, ) = targetAddress.call(callData);
             require(success, "BRIDGE_CALL_FAILED");
         } else if (_bridgeType == 1) {
+            // Across bridge can be called through defined interface, the variable of fee percentage
+            // is depending on gas price conditions in the target chain and is retrieved by the
+            // application off-chain by calling the Across bridge API
             uint256 feePct;
             assembly {
-                // offset 0x20 to data and 0x14 to tightly packed address, next 32 bytes expected are fee pct
+                // offset 0x20 to data and 0x14 to tightly packed address, at offset 0x34 32 bytes expected are fee pct
                 feePct := mload(add(_bridgeTxData, 0x34))
             }
             IAcrossBridgeSpokePool(targetAddress).deposit(cardPartnerAddress,
@@ -371,6 +439,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
             revert("unknown bridge");
         }
 
+        // this event is auxiliary (CardTopup event is main one), but used for bridged in/out transaction matching
         emit BridgeTx(msg.sender, cardTopupToken, _amount, targetAddress, cardPartnerAddress);
     }
 
@@ -390,8 +459,10 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
      */
     function recoverSigner(bytes32 message, bytes memory sig) internal pure returns (address)
     {
+        // signature is expected to be exactly 65 bytes (2 * 32 byte words and a checksum)
         require(sig.length == 65, "invalid sig length");
 
+        // signature components
         bytes32 r;
         bytes32 s;
         uint8 v;
@@ -428,6 +499,10 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
 
     /**
         @dev structure to represent RLP-decoded transaction data extracted from proof (only used fields are preserved)
+          as transaction data is not containing sender directly, we reconstruct unsigned transaction (RLP-encoded),
+          and its hash (unsignedHash) is used to retrieven sender (signer) address to verify approval proof.
+          Other fields are used to verify transaction parameters: data (function signature, amount, spender),
+          to (token) and chainID to avoid reusing proofs between chains.
      */
     struct SignedTransaction {
         uint256 chainID;      // for EIP-1661 only
@@ -454,7 +529,8 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
     }
 
     /**
-     * @dev RLP encodes a list of RLP encoded byte byte strings.
+     * @dev RLP encodes a list of RLP encoded byte byte strings. This method is used to reconstruct
+         RLP-encoded unsigned transaction, so its hash could be used to extract sender adderss
      * @notice From: https://github.com/sammayo/solidity-rlp-encoder/blob/master/RLPEncode.sol.
      * @param self The list of RLP encoded byte strings.
      * @return The RLP encoded list of items in bytes.
@@ -575,6 +651,9 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         }
     }
 
+    /**
+        @dev nibble is a unit to distinguish key-value values of Merkle-Patricia trie of Ethereum data stucture
+     */
     function decodeNibbles(bytes memory compact, uint skipNibbles) internal pure returns (bytes memory nibbles) {
         require(compact.length > 0);
 
@@ -597,6 +676,9 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         assert(nibblesLength == nibbles.length);
     }
 
+    /**
+        @dev decode a bytes sequence to traverse MPT nodes
+     */
     function merklePatriciaCompactDecode(bytes memory compact) internal pure returns (bool isLeaf, bytes memory nibbles) {
         require(compact.length > 0);
         uint first_nibble = uint8(compact[0]) >> 4 & 0xF;
@@ -630,6 +712,8 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         return i;
     }
 
+    // data structure of the expected proof bytes provided for MPT data
+    // decoding and transaction info extraction
     struct Proof {
         uint256 kind;
         bytes rlpBlockHeader;
@@ -638,6 +722,10 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         RLPReader.RLPItem[] stack;
     }
 
+    /**
+        @dev split the provided proof bytes to extract tx data and trie stack. RLP transofrmations
+          are used when required as it's the internal encoding of Eth-based data structures
+     */
     function decodeProofBlob(bytes calldata proofBlob) internal pure returns (Proof memory proof) {
         RLPReader.RLPItem[] memory proofFields = proofBlob.toRlpItem().toList();
         bytes memory rlpTxIndex = proofFields[2].toRlpBytes();
@@ -653,6 +741,13 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
     uint8 constant private TX_PROOF_RESULT_PRESENT = 1;
     uint8 constant private TX_PROOF_RESULT_ABSENT = 2;
 
+    /**
+        @dev validateTxProof is performing two main tasks:
+          1. verify that provided transaction (provided in proof bytes along with the block MPT trie)
+             is providing provided blockHash (which is accessible from Solidity for 256 most recent blocks),
+             that provides on-chain verification that transaction did occur.
+          2. decode transaction data for further verification of it's sender, called address and data.
+     */
     function validateTxProof(
         bytes32 blockHash,
         bytes calldata proofBlob
@@ -850,13 +945,18 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
 
     uint32 constant APPROVE_METHOD_ID = 0x095ea7b3;
 
+    /**
+        @dev check that txdata matches ERC20 approve method signature
+        and that spender is this contract's address.
+        assembly is used to load 32byte words with offset and cropping to the type
+     */
     function checkApprove(bytes memory txdata) view internal {
         // check method is approve
         uint32 methodId;
         assembly { methodId := mload(add(txdata, 0x4)) }
         require(methodId == APPROVE_METHOD_ID, "method mismatch");
 
-        // check spender is this contract
+        // check spender is this contract's address
         address spender;
         assembly { spender := div(mload(add(add(txdata, 0x20), 0x10 /* 4 func sig + 12 left padding in uint256 word */)), 0x1000000000000000000000000) }
         require(spender == address(this), "spender mismatch");
@@ -886,10 +986,21 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
     //   - receiver can be a keccak32 of a message constructed for tag topup by trusted backend (for single-time use),
     //     in such case tag cannot be recovered from the hash to stay private, and the hash can be also treated as
     //     proof if needed, that the address made topup request (contents of hashed message should match transaction content)
+    //
+    //  The normal operations flow is:
+    //  if token supports permit():
+    //    CardTopupPermit() -> set allowance using permit -> check allowance -> _processTopup()
+    //  otherwise, app makes approve call and then calls backend to verify it, signing a proof message
+    //    CardTopupTrusted() -> proof message -> check allowance -> _processTopup()
+    //  if backend is unavailable or not desired, on chain verifiable MPT proof is generated and method is called
+    //    CardTopupMPTProof() -> proof decode and approve tx data verify -> check allowance -> _processTopup()
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////    
 
     /**
         @dev Top-up card using native token or ERC20 token supporting permit
+          only permit that provides limit allowance is supported (DAI-type permits produce 0xff..ff allowance and not accepted)
+          This method is marked payable (only payable method in the contract) and used to make top-up with native token,
+          in such case permit bytes are empty (and allowance check is skipped as transferred tx value is used by Eth instead)
      */
     function CardTopupPermit(address _token, uint256 _amount, bytes calldata _permit, uint256 _expectedMinimumReceived, bytes memory _convertData, uint256 _bridgeType, bytes memory _bridgeTxData, bytes32 _receiverHash) public payable {
         // this snippet is borrowed from 1inch contracts
@@ -902,30 +1013,45 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
             }
         }
 
+        // don't perform allowance check for native token (allowance is n/a in such case, it's provided by tx.value)
         if (_token != ETH_TOKEN_ADDRESS) {
+            // we check 'current' allowance after executing permit (not the amount in permit itself)
             checkAllowance(_token, _amount);
         }
 
+        // allowance checks/enforcing complete, perform actual topup (this flow is further unified across 3 possible topup public methods)
         _processTopup(msg.sender, _token, _amount, _expectedMinimumReceived, _convertData, _bridgeType, _bridgeTxData, _receiverHash);
     }
 
     /**
         @dev Top-up card using signature verifying recent approval by a trusted party (backend)
+        The signature is not prefixed, and is backend-generated, containing within message allowance parameters
+        including token, owner address, timestamp and amount
      */
     function CardTopupTrusted(address _token, uint256 _amount, uint256 _timestamp, bytes calldata _signature, uint256 _expectedMinimumReceived, bytes memory _convertData, uint256 _bridgeType, bytes memory _bridgeTxData, bytes32 _receiverHash) public {
+        // reconstruct message from the data used for topup to ensure it matches provided information
         bytes32 message = constructMsg(keccak256(abi.encodePacked(msg.sender)), _token, _amount, _timestamp);
+        
+        // recover signer which must be trusted executor EOA
         address signer = recoverSigner(message, _signature);
         require(hasRole(TRUSTED_EXETUTOR_ROLE, signer), "wrong signature");
+
+        // if signature is old, don't accept it to avoid reuse and ensure approval was fresh
+        // trusted executor won't produce messages with timestamps in the future
         require(block.timestamp - _timestamp < allowanceSignatureTimespan, "old sig");
 
+        // check current allowance, regardless of the signed message vailidity
         checkAllowance(_token, _amount);
 
+        // allowance checks/enforcing complete, perform actual topup (this flow is further unified across 3 possible topup public methods)
         _processTopup(msg.sender, _token, _amount, _expectedMinimumReceived, _convertData, _bridgeType, _bridgeTxData, _receiverHash);
     }
 
     /**
         @dev Top-up card using on-chain verification (256 recent blocks are available)
-          using MPT-proof constructed by a webapp or any external tool
+          using MPT-proof constructed by a webapp or any external tool.
+          This topup flow could be executed without any trusted backend or application interaction and
+          is also used for fallback if backend is not available (or is not desired)
      */
     function CardTopupMPTProof(address _token, uint256 _amount, uint256 _blockNumber, bytes calldata _proofBlob, uint256 _expectedMinimumReceived, bytes memory _convertData, uint256 _bridgeType, bytes memory _bridgeTxData, bytes32 _receiverHash) public {
         require(block.number - _blockNumber < 256, "block too old");
@@ -934,9 +1060,11 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         (uint8 result, SignedTransaction memory t) = validateTxProof(blockHash, _proofBlob);
         require(result == TX_PROOF_RESULT_PRESENT, "proof failed");
 
+        // signature V is added 27 (historically-inclined to geth node code)
         address ecsender = ecrecover(t.unsignedHash, uint8(t.v + 27), bytes32(t.r), bytes32(t.s));
         require(ecsender == msg.sender, "sender mismatch");
 
+        // use decoded tx data to check it's call to approve with the correct spender
         checkApprove(t.data);
 
         // check that token is correct
@@ -949,6 +1077,7 @@ contract HardenedTopupProxy is AccessControlUpgradeable, SafeAllowanceResetUpgra
         //uint256 approveamount = toUint256(t.data, 36);
         checkAllowance(_token, _amount);
 
+        // allowance checks/enforcing complete, perform actual topup (this flow is further unified across 3 possible topup public methods)
         _processTopup(msg.sender, _token, _amount, _expectedMinimumReceived, _convertData, _bridgeType, _bridgeTxData, _receiverHash);
     }
 }

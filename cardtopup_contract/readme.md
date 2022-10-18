@@ -56,37 +56,16 @@ Across
 https://polygonscan.com/address/0x69b5c72837769ef1e7c164abc6515dcff217f920
 
 
-### Contract volume
-
-report of running cloc (https://github.com/AlDanial/cloc) on contracts directory:
-```
-      11 text files.
-classified 11 files
-      11 unique files.                              
-       0 files ignored.
-
-github.com/AlDanial/cloc v 1.94  T=0.02 s (562.5 files/s, 84735.0 lines/s)
--------------------------------------------------------------------------------
-Language                     files          blank        comment           code
--------------------------------------------------------------------------------
-Solidity                        11            257            448            952
--------------------------------------------------------------------------------
-SUM:                            11            257            448            952
--------------------------------------------------------------------------------
-```
-
 ### Cross-chain contract differences
 
 Contracts provided here are aimed to be deployed on L2 networks, provided version
 is aimed and was tested in Polygon (chainID 137).
 
-The expected code changes between L2 networks are as following:
+The expected code changes between L2 networks are parameters provided in
+constructor (initializer) or HardenedTopupProxy.sol: chainID value as uint
+and as RLP-encoded bytes for various checks.
 
-    HardenedTopupProxy.sol line 531: put appropriate RLP-encoded chainID value in assignment;
-
-    HardenedTopupProxy.sol line 939: put appropriate chainID value in require check;
-
-L1 contract version would not have any bridging function called, on line 326
+L1 topup contract version would not have any bridging function called, on line 380
 
     bridgeAssetDirect(amountReceived, _bridgeType, _bridgeTxData);
 
@@ -113,3 +92,4 @@ seed phrase is provided in the TopupProxyPermitFlow.test.js on line 22
 Truffle version should for now be 5.4.29 or lower, otherwise block header
 contains baseFeePerGas while its hash is being calculated using legacy
 structure (probably a bug).
+
